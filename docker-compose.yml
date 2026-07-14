@@ -1,0 +1,16 @@
+version: "3.8"
+services:
+  stok-takip:
+    build: .
+    container_name: 2m-stok-takip
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - JWT_SECRET=2M-Otomasyon-Guclu-Bir-Anahtar-Buraya-Yazin-2026
+      - DATA_DIR=/app/data
+    volumes:
+      - stok_data:/app/data
+
+volumes:
+  stok_data:

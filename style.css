@@ -1,0 +1,352 @@
+const API = '/api';
+let TOKEN = localStorage.getItem('token') || null;
+let CURRENT_USER = null;
+let PRODUCTS_CACHE = [];
+
+// ---------- API Helper ----------
+async function api(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+  const res = await fetch(API + path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Bir hata oluştu');
+  return data;
+}
+
+function money(n) {
+  return Number(n || 0).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' });
+}
+function num(n) {
+  return Number(n || 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 });
+}
+function fmtDate(s) {
+  if (!s) return '';
+  const d = new Date(s.replace(' ', 'T') + 'Z');
+  return d.toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+// ---------- Auth ----------
+async function tryAutoLogin() {
+  if (!TOKEN) return showLogin();
+  try {
+    CURRENT_USER = await api('/me');
+    showApp();
+  } catch (e) {
+    localStorage.removeItem('token');
+    TOKEN = null;
+    showLogin();
+  }
+}
+
+function showLogin() {
+  document.getElementById('login-screen').classList.remove('hidden');
+  document.getElementById('app').classList.add('hidden');
+}
+
+function showApp() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('current-user').textContent =
+    (CURRENT_USER.ad_soyad || CURRENT_USER.username) + ' · ' + (CURRENT_USER.role === 'admin' ? 'Yönetici' : 'Kullanıcı');
+  if (CURRENT_USER.role !== 'admin') {
+    document.getElementById('nav-users').classList.add('hidden');
+  }
+  switchView('dashboard');
+}
+
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = '';
+  try {
+    const data = await api('/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+    TOKEN = data.token;
+    localStorage.setItem('token', TOKEN);
+    CURRENT_USER = data.user;
+    showApp();
+  } catch (e) {
+    errEl.textContent = e.message;
+  }
+});
+
+document.getElementById('logout-btn').addEventListener('click', () => {
+  localStorage.removeItem('token');
+  TOKEN = null;
+  CURRENT_USER = null;
+  showLogin();
+});
+
+// ---------- Navigation ----------
+const VIEW_TITLES = {
+  dashboard: 'Panel', products: 'Stok Listesi', transaction: 'Stok Hareketi',
+  history: 'Hareket Geçmişi', users: 'Kullanıcılar'
+};
+
+document.querySelectorAll('.nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => switchView(btn.dataset.view));
+});
+
+function switchView(view) {
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+  document.getElementById('view-' + view).classList.remove('hidden');
+  document.getElementById('view-title').textContent = VIEW_TITLES[view];
+
+  if (view === 'dashboard') loadDashboard();
+  if (view === 'products') loadProducts();
+  if (view === 'transaction') loadTransactionForm();
+  if (view === 'history') loadHistory();
+  if (view === 'users') loadUsers();
+}
+
+// ---------- Dashboard ----------
+async function loadDashboard() {
+  const d = await api('/dashboard');
+  document.getElementById('kpi-total-products').textContent = d.toplamUrun;
+  document.getElementById('kpi-critical').textContent = d.kritikUrunSayisi;
+  document.getElementById('kpi-value').textContent = money(d.toplamDeger);
+  document.getElementById('kpi-today').textContent = `+${num(d.bugunHareket.giris)} / -${num(d.bugunHareket.cikis)}`;
+
+  const critEl = document.getElementById('critical-list');
+  critEl.innerHTML = d.kritikUrunler.length
+    ? d.kritikUrunler.map(p => `
+      <div class="list-row">
+        <div><strong>${esc(p.ad)}</strong><br><span class="muted">${esc(p.kod)}</span></div>
+        <div style="text-align:right"><strong style="color:var(--red)">${num(p.miktar)} ${esc(p.birim)}</strong><br><span class="muted">kritik: ${num(p.kritik_seviye)}</span></div>
+      </div>`).join('')
+    : '<div class="empty-note">Kritik seviyede ürün yok 👍</div>';
+
+  const recEl = document.getElementById('recent-list');
+  recEl.innerHTML = d.sonHareketler.length
+    ? d.sonHareketler.map(t => `
+      <div class="list-row">
+        <div><strong>${esc(t.urun_ad)}</strong><br><span class="muted">${fmtDate(t.tarih)} · ${esc(t.kullanici)}</span></div>
+        <div style="text-align:right">${txBadge(t.tip)}<br><span class="muted">${num(t.miktar)} ${esc(t.birim)}</span></div>
+      </div>`).join('')
+    : '<div class="empty-note">Henüz hareket yok</div>';
+}
+
+function txBadge(tip) {
+  const map = { giris: ['badge-giris', 'Giriş'], cikis: ['badge-cikis', 'Çıkış'], duzeltme: ['badge-duzeltme', 'Düzeltme'] };
+  const [cls, label] = map[tip] || ['badge-duzeltme', tip];
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ---------- Products ----------
+async function loadProducts(q = '') {
+  const rows = await api('/products' + (q ? '?q=' + encodeURIComponent(q) : ''));
+  PRODUCTS_CACHE = rows;
+  const tbody = document.getElementById('products-tbody');
+  tbody.innerHTML = rows.map(p => `
+    <tr class="${p.miktar <= p.kritik_seviye ? 'critical-row' : ''}">
+      <td>${esc(p.kod)}</td>
+      <td>${esc(p.ad)}</td>
+      <td>${esc(p.kategori || '-')}</td>
+      <td>${num(p.miktar)}</td>
+      <td>${esc(p.birim)}</td>
+      <td>${num(p.kritik_seviye)}</td>
+      <td>${money(p.birim_fiyat)}</td>
+      <td>${money(p.miktar * p.birim_fiyat)}</td>
+      <td>${esc(p.konum || '-')}</td>
+      <td>
+        <button class="btn-small" onclick="editProduct(${p.id})">Düzenle</button>
+        ${CURRENT_USER.role === 'admin' ? `<button class="btn-danger" onclick="deleteProduct(${p.id})">Sil</button>` : ''}
+      </td>
+    </tr>`).join('') || '<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:20px">Ürün bulunamadı</td></tr>';
+}
+
+let searchTimer;
+document.getElementById('product-search').addEventListener('input', (e) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadProducts(e.target.value), 250);
+});
+
+document.getElementById('add-product-btn').addEventListener('click', () => openProductModal());
+
+function openProductModal(product = null) {
+  document.getElementById('product-error').textContent = '';
+  document.getElementById('product-modal-title').textContent = product ? 'Ürün Düzenle' : 'Yeni Ürün';
+  document.getElementById('pf-id').value = product?.id || '';
+  document.getElementById('pf-kod').value = product?.kod || '';
+  document.getElementById('pf-ad').value = product?.ad || '';
+  document.getElementById('pf-kategori').value = product?.kategori || '';
+  document.getElementById('pf-miktar').value = product?.miktar ?? 0;
+  document.getElementById('pf-miktar').disabled = !!product;
+  document.getElementById('pf-birim').value = product?.birim || 'adet';
+  document.getElementById('pf-kritik').value = product?.kritik_seviye ?? 0;
+  document.getElementById('pf-fiyat').value = product?.birim_fiyat ?? 0;
+  document.getElementById('pf-konum').value = product?.konum || '';
+  document.getElementById('pf-aciklama').value = product?.aciklama || '';
+  document.getElementById('product-modal').classList.remove('hidden');
+  populateCategoryList();
+}
+
+async function populateCategoryList() {
+  try {
+    const cats = await api('/categories');
+    document.getElementById('category-list').innerHTML = cats.map(c => `<option value="${esc(c.ad)}">`).join('');
+  } catch (e) {}
+}
+
+document.getElementById('product-cancel-btn').addEventListener('click', () => {
+  document.getElementById('product-modal').classList.add('hidden');
+});
+
+function editProduct(id) {
+  const p = PRODUCTS_CACHE.find(x => x.id === id);
+  if (p) openProductModal(p);
+}
+
+async function deleteProduct(id) {
+  if (!confirm('Bu ürünü silmek istediğinize emin misiniz?')) return;
+  await api('/products/' + id, { method: 'DELETE' });
+  loadProducts(document.getElementById('product-search').value);
+}
+
+document.getElementById('product-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = document.getElementById('pf-id').value;
+  const kategori = document.getElementById('pf-kategori').value.trim();
+  const payload = {
+    kod: document.getElementById('pf-kod').value.trim(),
+    ad: document.getElementById('pf-ad').value.trim(),
+    kategori,
+    miktar: Number(document.getElementById('pf-miktar').value),
+    birim: document.getElementById('pf-birim').value.trim() || 'adet',
+    kritik_seviye: Number(document.getElementById('pf-kritik').value),
+    birim_fiyat: Number(document.getElementById('pf-fiyat').value),
+    konum: document.getElementById('pf-konum').value.trim(),
+    aciklama: document.getElementById('pf-aciklama').value.trim()
+  };
+  try {
+    if (kategori) {
+      try { await api('/categories', { method: 'POST', body: JSON.stringify({ ad: kategori }) }); } catch (e) {}
+    }
+    if (id) {
+      await api('/products/' + id, { method: 'PUT', body: JSON.stringify(payload) });
+    } else {
+      await api('/products', { method: 'POST', body: JSON.stringify(payload) });
+    }
+    document.getElementById('product-modal').classList.add('hidden');
+    loadProducts(document.getElementById('product-search').value);
+  } catch (e) {
+    document.getElementById('product-error').textContent = e.message;
+  }
+});
+
+// ---------- Transaction ----------
+async function loadTransactionForm() {
+  const rows = await api('/products');
+  PRODUCTS_CACHE = rows;
+  const select = document.getElementById('tx-product');
+  select.innerHTML = rows.map(p => `<option value="${p.id}">${esc(p.kod)} - ${esc(p.ad)} (mevcut: ${num(p.miktar)} ${esc(p.birim)})</option>`).join('');
+  document.getElementById('tx-error').textContent = '';
+  document.getElementById('transaction-form').reset();
+}
+
+document.getElementById('transaction-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const payload = {
+    product_id: Number(document.getElementById('tx-product').value),
+    tip: document.getElementById('tx-type').value,
+    miktar: Number(document.getElementById('tx-amount').value),
+    ilgili_kisi: document.getElementById('tx-person').value.trim(),
+    aciklama: document.getElementById('tx-note').value.trim()
+  };
+  try {
+    await api('/transactions', { method: 'POST', body: JSON.stringify(payload) });
+    document.getElementById('tx-error').style.color = 'var(--green)';
+    document.getElementById('tx-error').textContent = 'Hareket başarıyla kaydedildi.';
+    loadTransactionForm();
+    setTimeout(() => { document.getElementById('tx-error').textContent = ''; document.getElementById('tx-error').style.color = 'var(--red)'; }, 2500);
+  } catch (e) {
+    document.getElementById('tx-error').style.color = 'var(--red)';
+    document.getElementById('tx-error').textContent = e.message;
+  }
+});
+
+// ---------- History ----------
+async function loadHistory() {
+  const params = new URLSearchParams();
+  const tip = document.getElementById('hist-type').value;
+  const start = document.getElementById('hist-start').value;
+  const end = document.getElementById('hist-end').value;
+  if (tip) params.set('tip', tip);
+  if (start) params.set('baslangic', start);
+  if (end) params.set('bitis', end);
+  params.set('limit', '300');
+  const rows = await api('/transactions?' + params.toString());
+  const tbody = document.getElementById('history-tbody');
+  tbody.innerHTML = rows.map(t => `
+    <tr>
+      <td>${fmtDate(t.tarih)}</td>
+      <td>${esc(t.kod)} - ${esc(t.urun_ad)}</td>
+      <td>${txBadge(t.tip)}</td>
+      <td>${num(t.miktar)} ${esc(t.birim)}</td>
+      <td>${num(t.onceki_miktar)}</td>
+      <td>${num(t.yeni_miktar)}</td>
+      <td>${esc(t.ilgili_kisi || '-')}</td>
+      <td>${esc(t.aciklama || '-')}</td>
+      <td>${esc(t.kullanici)}</td>
+    </tr>`).join('') || '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">Kayıt bulunamadı</td></tr>';
+}
+
+document.getElementById('hist-filter-btn').addEventListener('click', loadHistory);
+
+// ---------- Users ----------
+async function loadUsers() {
+  const rows = await api('/users');
+  const tbody = document.getElementById('users-tbody');
+  tbody.innerHTML = rows.map(u => `
+    <tr>
+      <td>${esc(u.username)}</td>
+      <td>${esc(u.ad_soyad || '-')}</td>
+      <td>${u.role === 'admin' ? 'Yönetici' : 'Kullanıcı'}</td>
+      <td>${fmtDate(u.created_at)}</td>
+      <td>${u.id !== CURRENT_USER.id ? `<button class="btn-danger" onclick="deleteUser(${u.id})">Sil</button>` : ''}</td>
+    </tr>`).join('');
+}
+
+document.getElementById('add-user-btn').addEventListener('click', () => {
+  document.getElementById('user-error').textContent = '';
+  document.getElementById('user-form').reset();
+  document.getElementById('user-modal').classList.remove('hidden');
+});
+document.getElementById('user-cancel-btn').addEventListener('click', () => {
+  document.getElementById('user-modal').classList.add('hidden');
+});
+document.getElementById('user-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const payload = {
+    username: document.getElementById('uf-username').value.trim(),
+    ad_soyad: document.getElementById('uf-adsoyad').value.trim(),
+    password: document.getElementById('uf-password').value,
+    role: document.getElementById('uf-role').value
+  };
+  try {
+    await api('/users', { method: 'POST', body: JSON.stringify(payload) });
+    document.getElementById('user-modal').classList.add('hidden');
+    loadUsers();
+  } catch (e) {
+    document.getElementById('user-error').textContent = e.message;
+  }
+});
+
+async function deleteUser(id) {
+  if (!confirm('Bu kullanıcıyı silmek istediğinize emin misiniz?')) return;
+  await api('/users/' + id, { method: 'DELETE' });
+  loadUsers();
+}
+
+// ---------- Connection indicator ----------
+window.addEventListener('online', () => document.getElementById('sync-indicator').textContent = '🟢 Çevrimiçi');
+window.addEventListener('offline', () => document.getElementById('sync-indicator').textContent = '🔴 Bağlantı yok');
+
+// ---------- Init ----------
+tryAutoLogin();

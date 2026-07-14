@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>2M Otomasyon | Stok Takip Sistemi</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1F3864">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2218%22 fill=%22%231F3864%22/><text x=%2250%22 y=%2266%22 font-size=%2255%22 fill=%22white%22 text-anchor=%22middle%22 font-family=%22Arial%22>2M</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- LOGIN EKRANI -->
+<div id="login-screen" class="login-screen">
+  <div class="login-card">
+    <div class="login-logo">2M</div>
+    <h1>Stok Takip Sistemi</h1>
+    <p class="login-sub">2M Otomasyon</p>
+    <form id="login-form">
+      <label>Kullanıcı Adı</label>
+      <input type="text" id="login-username" autocomplete="username" required>
+      <label>Şifre</label>
+      <input type="password" id="login-password" autocomplete="current-password" required>
+      <div id="login-error" class="error-msg"></div>
+      <button type="submit" class="btn-primary btn-block">Giriş Yap</button>
+    </form>
+  </div>
+</div>
+
+<!-- ANA UYGULAMA -->
+<div id="app" class="app hidden">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-box">2M</div>
+      <div>
+        <div class="brand-name">STOK TAKİP</div>
+        <div class="brand-sub">2M Otomasyon</div>
+      </div>
+    </div>
+    <nav>
+      <button class="nav-btn active" data-view="dashboard">📊 Panel</button>
+      <button class="nav-btn" data-view="products">📦 Stok Listesi</button>
+      <button class="nav-btn" data-view="transaction">🔄 Stok Hareketi</button>
+      <button class="nav-btn" data-view="history">🕒 Hareket Geçmişi</button>
+      <button class="nav-btn" data-view="users" id="nav-users">👤 Kullanıcılar</button>
+    </nav>
+    <div class="sidebar-footer">
+      <div id="current-user" class="current-user"></div>
+      <button id="logout-btn" class="btn-ghost btn-block">Çıkış Yap</button>
+    </div>
+  </aside>
+
+  <main class="content">
+    <header class="topbar">
+      <h2 id="view-title">Panel</h2>
+      <div class="topbar-right">
+        <span id="sync-indicator" class="sync-indicator">🟢 Çevrimiçi</span>
+      </div>
+    </header>
+
+    <!-- DASHBOARD -->
+    <section id="view-dashboard" class="view">
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Toplam Ürün</div>
+          <div class="kpi-value" id="kpi-total-products">-</div>
+        </div>
+        <div class="kpi-card kpi-warn">
+          <div class="kpi-label">Kritik Seviyedeki Ürün</div>
+          <div class="kpi-value" id="kpi-critical">-</div>
+        </div>
+        <div class="kpi-card kpi-good">
+          <div class="kpi-label">Toplam Stok Değeri</div>
+          <div class="kpi-value" id="kpi-value">-</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Bugün Giriş / Çıkış</div>
+          <div class="kpi-value" id="kpi-today">-</div>
+        </div>
+      </div>
+
+      <div class="dash-grid">
+        <div class="panel">
+          <h3>⚠️ Kritik Seviyedeki Ürünler</h3>
+          <div id="critical-list" class="scroll-list"></div>
+        </div>
+        <div class="panel">
+          <h3>🕒 Son Hareketler</h3>
+          <div id="recent-list" class="scroll-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ÜRÜNLER -->
+    <section id="view-products" class="view hidden">
+      <div class="toolbar">
+        <input type="text" id="product-search" placeholder="Ürün kodu, adı veya açıklamada ara...">
+        <button class="btn-primary" id="add-product-btn">+ Yeni Ürün</button>
+      </div>
+      <div class="table-wrap">
+        <table id="products-table">
+          <thead>
+            <tr>
+              <th>Kod</th><th>Ürün Adı</th><th>Kategori</th><th>Miktar</th><th>Birim</th>
+              <th>Kritik Seviye</th><th>Birim Fiyat</th><th>Toplam Değer</th><th>Konum</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="products-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- STOK HAREKETİ -->
+    <section id="view-transaction" class="view hidden">
+      <div class="panel narrow">
+        <h3>Yeni Stok Hareketi</h3>
+        <form id="transaction-form">
+          <label>Ürün</label>
+          <select id="tx-product" required></select>
+          <label>Hareket Tipi</label>
+          <select id="tx-type" required>
+            <option value="giris">Giriş (Stok Ekle)</option>
+            <option value="cikis">Çıkış (Stok Azalt)</option>
+            <option value="duzeltme">Düzeltme (Sayım - Miktarı Sabitle)</option>
+          </select>
+          <label>Miktar</label>
+          <input type="number" id="tx-amount" step="any" min="0" required>
+          <label>İlgili Kişi (Teslim Alan / Teslim Eden)</label>
+          <input type="text" id="tx-person">
+          <label>Açıklama</label>
+          <input type="text" id="tx-note" placeholder="Örn: Saha teslimatı, sayım düzeltmesi vb.">
+          <div id="tx-error" class="error-msg"></div>
+          <button type="submit" class="btn-primary btn-block">Hareketi Kaydet</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- GEÇMİŞ -->
+    <section id="view-history" class="view hidden">
+      <div class="toolbar">
+        <select id="hist-type">
+          <option value="">Tüm Hareketler</option>
+          <option value="giris">Sadece Giriş</option>
+          <option value="cikis">Sadece Çıkış</option>
+          <option value="duzeltme">Sadece Düzeltme</option>
+        </select>
+        <input type="date" id="hist-start">
+        <input type="date" id="hist-end">
+        <button class="btn-secondary" id="hist-filter-btn">Filtrele</button>
+      </div>
+      <div class="table-wrap">
+        <table id="history-table">
+          <thead>
+            <tr><th>Tarih</th><th>Ürün</th><th>Tip</th><th>Miktar</th><th>Önceki</th><th>Yeni</th><th>İlgili Kişi</th><th>Açıklama</th><th>Kullanıcı</th></tr>
+          </thead>
+          <tbody id="history-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- KULLANICILAR -->
+    <section id="view-users" class="view hidden">
+      <div class="toolbar">
+        <button class="btn-primary" id="add-user-btn">+ Yeni Kullanıcı</button>
+      </div>
+      <div class="table-wrap">
+        <table id="users-table">
+          <thead><tr><th>Kullanıcı Adı</th><th>Ad Soyad</th><th>Rol</th><th>Kayıt Tarihi</th><th></th></tr></thead>
+          <tbody id="users-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ÜRÜN EKLE/DÜZENLE MODAL -->
+<div id="product-modal" class="modal hidden">
+  <div class="modal-card">
+    <h3 id="product-modal-title">Yeni Ürün</h3>
+    <form id="product-form">
+      <input type="hidden" id="pf-id">
+      <div class="form-row">
+        <div><label>Ürün Kodu</label><input type="text" id="pf-kod" required></div>
+        <div><label>Kategori</label><input type="text" id="pf-kategori" list="category-list"><datalist id="category-list"></datalist></div>
+      </div>
+      <label>Ürün Adı</label>
+      <input type="text" id="pf-ad" required>
+      <div class="form-row">
+        <div><label>Başlangıç Miktarı</label><input type="number" id="pf-miktar" step="any" min="0"></div>
+        <div><label>Birim</label><input type="text" id="pf-birim" value="adet"></div>
+      </div>
+      <div class="form-row">
+        <div><label>Kritik Seviye</label><input type="number" id="pf-kritik" step="any" min="0" value="0"></div>
+        <div><label>Birim Fiyat (₺)</label><input type="number" id="pf-fiyat" step="any" min="0" value="0"></div>
+      </div>
+      <label>Konum / Raf</label>
+      <input type="text" id="pf-konum">
+      <label>Açıklama</label>
+      <input type="text" id="pf-aciklama">
+      <div id="product-error" class="error-msg"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" id="product-cancel-btn">Vazgeç</button>
+        <button type="submit" class="btn-primary">Kaydet</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- KULLANICI EKLE MODAL -->
+<div id="user-modal" class="modal hidden">
+  <div class="modal-card">
+    <h3>Yeni Kullanıcı</h3>
+    <form id="user-form">
+      <label>Kullanıcı Adı</label>
+      <input type="text" id="uf-username" required>
+      <label>Ad Soyad</label>
+      <input type="text" id="uf-adsoyad">
+      <label>Şifre</label>
+      <input type="password" id="uf-password" required>
+      <label>Rol</label>
+      <select id="uf-role"><option value="user">Kullanıcı</option><option value="admin">Yönetici</option></select>
+      <div id="user-error" class="error-msg"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" id="user-cancel-btn">Vazgeç</button>
+        <button type="submit" class="btn-primary">Oluştur</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
